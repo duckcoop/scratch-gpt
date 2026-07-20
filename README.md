@@ -7,6 +7,22 @@ learns only from the corpus in `data/`. What you train on is what you get.
 Built in plain PyTorch, ~300 lines of model code. Runs on a single consumer
 GPU (developed on an RTX 4070 SUPER) or CPU.
 
+The 52M-parameter model, after four hours of training on one desktop GPU,
+prompted with *"The dragon looked at the tiny mouse and said,"*:
+
+```text
+The dragon looked at the tiny mouse and said, "Hello there. Would you like
+to come to the castle and have some fun?"
+The mouse said, "Yes, please!"
+The dragon opened its giant hand, and off they went to the castle.
+...
+At the end of the day, the dragon and the mouse said goodbye. They promised
+to come back another day. Then they both went home with smiles on their faces.
+```
+
+Random noise four hours earlier. Nothing was fine-tuned; this is what the
+architecture in `model.py` learns on its own from raw text.
+
 ## Quickstart
 
 ```bash
@@ -14,7 +30,20 @@ pip install torch numpy          # CUDA build recommended: pytorch.org/get-start
 python data/prepare.py           # download corpus + train the BPE tokenizer (~1 min)
 python train.py                  # a few minutes on a modern GPU
 python sample.py --prompt "ROMEO:" --tokens 500
-python -m pytest -q              # tokenizer test suite
+python -m pytest -q              # 39 tests, CPU-only, ~2s
+```
+
+To reproduce the story model from the top of this README (~4 h on a 12 GB GPU),
+download [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories)
+to `data/TinyStories-train.txt`, then:
+
+```bash
+python data/prepare.py --input TinyStories-train.txt --vocab-size 4096 --sample-mb 50
+python train.py --n-layer 10 --n-head 10 --n-embd 640 --block-size 512 \
+                --batch-size 32 --lr 6e-4 --dropout 0.0 --max-iters 100000 \
+                --eval-interval 2000 --eval-iters 50 --out-dir out-tinystories
+python sample.py --ckpt out-tinystories/ckpt.pt --tokens 300 \
+                 --prompt "Once upon a time, there was a little robot named Bolt."
 ```
 
 ## What's in here
@@ -79,16 +108,60 @@ Decoder-only transformer (GPT-2 style):
 - Flash attention via `F.scaled_dot_product_attention`
 
 Default config: 6 layers, 6 heads, 384-dim embeddings, 256-token context
-(~10.7M parameters). Scale it up by editing the config block in `train.py`.
+(~10.7M parameters). Scale it up with `--n-layer/--n-head/--n-embd/--block-size`;
+the story model above is `10 / 10 / 640 / 512`, which is 52M parameters and fits
+in about 4 GB of VRAM at batch size 32.
 
 ## Roadmap
 
 - [x] Phase 1 — char-level GPT, tiny-shakespeare, single GPU
 - [x] Phase 2 — byte-level BPE tokenizer written from scratch, with a measured comparison
-- [ ] Phase 3 — larger corpus (TinyStories / FineWeb sample), scale to ~50–124M params
+- [x] Phase 3 — TinyStories, 52M params, coherent English
 - [ ] Phase 4 — instruction fine-tuning on top of the pretrained base → chat REPL
 
-## Results
+## Results — Phase 3, coherent English
+
+| | |
+| --- | --- |
+| Corpus | TinyStories, 1.92 GB → **487M tokens** (4,096-token BPE, 3.95 bytes/token) |
+| Model | **52.13M params** — 10 layers, 10 heads, 640-dim, 512-token context |
+| Training | 100,000 iters, batch 32 — **1.64B tokens seen** (~3.7 epochs) |
+| Hardware | one RTX 4070 SUPER, **4h 8m** |
+| Best val loss | **1.1549** (0.4218 bits/byte), at the final iteration |
+
+Phase 2 ended by concluding the bottleneck was data, not tokenization. Phase 3
+is that prediction tested: same `model.py`, same `tokenizer.py`, same training
+loop — 1,700x more text and 4.7x the parameters.
+
+```text
+Sara found a strange key in the garden. She didn't know what it was for, so
+she asked her mom.
+"Mom, what is this?" asked Sara.
+"That's a key, Sara. It can unlock anything," said Mom.
+Sara was so excited to try it out. She took the key and tried it. The door
+opened, and she was so happy to see what was inside.
+```
+
+Compare that to the best the 11M model managed on Shakespeare — *"O, by thou
+wert wit'st to bed, but crusp thy head"* — and the difference is entirely the
+data. The model learns dialogue punctuation, attribution (`asked Sara` /
+`said Mom`), character consistency across paragraphs, and story structure with
+a beginning and an ending. It even learned to emit `<|endoftext|>` and start a
+fresh story.
+
+It is not flawless. Sentences like *"He could not turn the game back that
+right"* still appear, and plots drift. At 52M parameters that is the expected
+ceiling — TinyStories exists precisely because small models can learn *this*
+distribution well, and general web text not at all.
+
+**Data volume, not model size, was the whole story.** The 11M Shakespeare model
+hit its best validation loss at iteration 1,000 of 5,000 and then memorised for
+the remaining 80% of the run. The 52M model improved for all 100,000 iterations
+and was still improving when the schedule ended — with 438M training tokens
+there is simply nothing to memorise. Validation loss tracked training loss
+within 0.03 for the first half of the run.
+
+## Results — Phase 2, the tokenizer comparison
 
 All runs: ~11M params, 6 layers, 6 heads, 384-dim, 256-token context, 5000
 iterations, identical seed, one RTX 4070 SUPER. Lower bits-per-byte is better.

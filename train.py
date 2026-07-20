@@ -46,11 +46,19 @@ _p.add_argument("--dropout", type=float, default=dropout)
 _p.add_argument("--patience", type=int, default=patience, help="0 disables early stopping")
 _p.add_argument("--eval-interval", type=int, default=eval_interval)
 _p.add_argument("--eval-iters", type=int, default=eval_iters)
+_p.add_argument("--n-layer", type=int, default=n_layer)
+_p.add_argument("--n-head", type=int, default=n_head)
+_p.add_argument("--n-embd", type=int, default=n_embd)
+_p.add_argument("--lr", type=float, default=learning_rate)
+_p.add_argument("--compile", action="store_true", help="torch.compile the model (slow start, faster steps)")
 _args = _p.parse_args()
 out_dir, max_iters = _args.out_dir, _args.max_iters
 block_size, batch_size = _args.block_size, _args.batch_size
 dropout, patience = _args.dropout, _args.patience
 eval_interval, eval_iters = _args.eval_interval, _args.eval_iters
+n_layer, n_head, n_embd = _args.n_layer, _args.n_head, _args.n_embd
+learning_rate = _args.lr
+min_lr = learning_rate / 10
 
 torch.manual_seed(seed)
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -125,7 +133,14 @@ def main():
         n_layer=n_layer, n_head=n_head, n_embd=n_embd, dropout=dropout,
     )
     model = GPT(GPTConfig(**model_args)).to(device)
-    print(f"model: {model.num_params() / 1e6:.2f}M parameters")
+    print(
+        f"model: {model.num_params() / 1e6:.2f}M parameters "
+        f"({n_layer}L {n_head}H {n_embd}D, ctx {block_size})"
+    )
+    raw_model = model  # torch.compile wraps the module and prefixes state_dict keys
+    if _args.compile:
+        print("compiling ...")
+        model = torch.compile(model)
 
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=learning_rate, betas=(0.9, 0.95), weight_decay=weight_decay
@@ -153,7 +168,7 @@ def main():
                 best_val = losses["val"]
                 torch.save(
                     {
-                        "model": model.state_dict(),
+                        "model": raw_model.state_dict(),
                         "model_args": model_args,
                         "iter": it,
                         "best_val": best_val,
