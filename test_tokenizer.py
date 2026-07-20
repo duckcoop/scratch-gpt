@@ -2,7 +2,7 @@
 
 import pytest
 
-from tokenizer import BPETokenizer
+from tokenizer import SPLIT_PATTERN, BPETokenizer
 
 CORPUS = (
     "the quick brown fox jumps over the lazy dog. "
@@ -36,6 +36,33 @@ def test_roundtrip(tok, text):
 
 def test_roundtrip_on_training_corpus(tok):
     assert tok.decode(tok.encode(CORPUS)) == CORPUS
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "hello world",
+        "",
+        "   ",
+        "don't can't we've I'll",
+        "line one\nline two\n\n\ttabbed",
+        "punctuation!!! ...yes? (parens) [brackets]",
+        "numbers 42 and 3.14159 and 007",
+        "unicode café 日本語 🔥 mixed",
+        "ROMEO:\nWhat, ho! 'tis I.",
+    ],
+)
+def test_presplit_is_lossless(text):
+    """Every character must land in exactly one piece — a dropped character here
+    would silently corrupt every encode/decode roundtrip."""
+    assert "".join(SPLIT_PATTERN.findall(text)) == text
+
+
+def test_presplit_separates_punctuation_and_newlines():
+    pieces = SPLIT_PATTERN.findall("dog.\nThe cat")
+    assert " cat" in pieces
+    # the word must not be glued to the punctuation or the newline
+    assert not any("dog." in p for p in pieces)
 
 
 def test_untrained_tokenizer_is_still_lossless():

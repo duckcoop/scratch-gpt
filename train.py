@@ -44,10 +44,13 @@ _p.add_argument("--block-size", type=int, default=block_size)
 _p.add_argument("--batch-size", type=int, default=batch_size)
 _p.add_argument("--dropout", type=float, default=dropout)
 _p.add_argument("--patience", type=int, default=patience, help="0 disables early stopping")
+_p.add_argument("--eval-interval", type=int, default=eval_interval)
+_p.add_argument("--eval-iters", type=int, default=eval_iters)
 _args = _p.parse_args()
 out_dir, max_iters = _args.out_dir, _args.max_iters
 block_size, batch_size = _args.block_size, _args.batch_size
 dropout, patience = _args.dropout, _args.patience
+eval_interval, eval_iters = _args.eval_interval, _args.eval_iters
 
 torch.manual_seed(seed)
 device = "cuda" if torch.cuda.is_available() else "cpu"

@@ -13,7 +13,18 @@ Use:     ids = tok.encode("hello");  text = tok.decode(ids)
 import json
 import os
 import pickle
+import re
 from collections import Counter
+
+# GPT-2's pre-tokenization pattern, adapted to the standard `re` module
+# (the original needs the third-party `regex` package for \p{L}; [^\W\d_] is
+# the unicode-aware stand-in for "letter"). Splitting the text on this before
+# learning merges keeps a merge from ever spanning a word/punctuation/newline
+# boundary, so the vocabulary is not wasted on junk like "dog.\nThe".
+# Every character lands in exactly one piece, so the split is lossless.
+SPLIT_PATTERN = re.compile(
+    r"""'(?:[sdmt]|ll|ve|re)| ?[^\W\d_]+| ?\d+| ?[^\s\w]+|\s+(?!\S)|\s+"""
+)
 
 
 def _get_pair_counts(ids_seq, counts=None, weights=None):
@@ -54,18 +65,11 @@ class BPETokenizer:
         assert vocab_size >= 256, "vocab_size must leave room for the 256 byte tokens"
         num_merges = vocab_size - 256
 
-        # Pre-split on whitespace so merges never span across a space boundary.
-        # Each word keeps a leading-space marker by being encoded with its space,
-        # which is how GPT-2-style tokenizers represent word boundaries.
-        #
-        # Work on *unique* words weighted by frequency, not on every occurrence:
-        # a corpus with 200k words typically has only ~25k distinct ones, and
-        # merging is identical for every copy of the same word.
-        word_freq = Counter()
-        for i, w in enumerate(text.split(" ")):
-            piece = w if i == 0 else " " + w
-            if piece:
-                word_freq[piece] += 1
+        # Pre-split so merges never span a word/punctuation/newline boundary,
+        # and work on *unique* pieces weighted by frequency rather than on every
+        # occurrence: a corpus of 200k words typically has only ~25k distinct
+        # ones, and merging is identical for every copy of the same piece.
+        word_freq = Counter(SPLIT_PATTERN.findall(text))
 
         chunks = [list(w.encode("utf-8")) for w in word_freq]
         weights = list(word_freq.values())
@@ -117,10 +121,8 @@ class BPETokenizer:
     def encode(self, text):
         """Encode a string into a list of token ids."""
         out = []
-        for i, w in enumerate(text.split(" ")):
-            piece = w if i == 0 else " " + w
-            if piece:
-                out.extend(self._encode_piece(piece))
+        for piece in SPLIT_PATTERN.findall(text):
+            out.extend(self._encode_piece(piece))
         return out
 
     def decode(self, ids):

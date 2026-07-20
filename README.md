@@ -26,7 +26,19 @@ python -m pytest -q              # tokenizer test suite
 | `data/prepare.py` | Downloads the corpus, trains the tokenizer, writes `train.bin`/`val.bin` |
 | `train.py` | Training loop: AdamW, cosine LR schedule with warmup, bf16 autocast, grad clipping, best-val checkpointing |
 | `sample.py` | Autoregressive generation with temperature and top-k sampling |
-| `test_tokenizer.py` | Tokenizer test suite — roundtrip on unicode, emoji, whitespace edge cases |
+| `test_tokenizer.py` | Roundtrip on unicode, emoji, contractions, whitespace edge cases |
+| `test_model.py` | Shapes, weight tying, gradient flow, and that attention is really causal |
+
+39 tests, all CPU-only, run in under two seconds:
+
+```bash
+python -m pytest -q
+```
+
+The one worth reading is `test_attention_is_causal`. If the causal mask breaks,
+the model can see the token it is trying to predict — training loss collapses,
+generations turn to noise, and *nothing raises an error*. The test perturbs the
+last token and asserts every earlier position's logits are bit-identical.
 
 ## Tokenizers
 
@@ -122,18 +134,41 @@ Neither is Shakespeare. Both started as random noise minutes earlier.
 
 ### What the tokenizer learned
 
-The first merges are the most frequent byte pairs in English, and later ones
-are recognisably Shakespearean:
+The first merges are the most frequent byte pairs in English, and later ones are
+recognisably Shakespearean:
 
 ```text
-merge   1: (32, 116)   -> ' t'        x23837
-merge   2: (104, 101)  -> 'he'        x18203
-merge 100: (289, 270)  -> ' his'      x1415
-merge 600: (350, 400)  -> ' stand'    x178
-merge 700: (954, 438)  -> 'ORIOLAN'   x150     <- from CORIOLANUS
+merge   1: (32, 116)  -> ' t'      x23837
+merge   2: (104, 101) -> 'he'      x18203
+merge 100: (309, 293) -> ' have'   x1325
+merge 200: (39, 273)  -> "'ll"     x580
+merge 500: (309, 295) -> ' hast'   x205
+merge 600: (260, 710) -> ' soul'   x163
 ```
 
-Training 768 merges over the 1MB corpus takes ~50s in pure Python. The naive
-implementation — rescanning every word occurrence each merge — took ~20 minutes;
-operating on unique words weighted by frequency (as in the original BPE paper)
-is what makes it practical.
+Two things make this practical. Merging **unique pieces weighted by frequency**
+rather than every occurrence (as in the original BPE paper) took training from
+~20 minutes to ~50s. Adding **GPT-2's regex pre-tokenization** — which splits
+letters, digits, punctuation and whitespace apart before merging, so no merge
+can ever span `"dog.\nThe"` — took it to **8.7s**.
+
+Pre-tokenization is a real trade, not a free win: raw compression *fell* from
+2.68 to 2.43 bytes/token, because the tokenizer is no longer allowed to glue
+punctuation and newlines into words. The tokens it does learn are cleaner and
+generalise better, which is why GPT-2 through GPT-4 all do this — but whether
+that improves *modelling* on this corpus is unmeasured. See below.
+
+### Measured vs unmeasured
+
+Being explicit, because the distinction matters:
+
+| Claim | Status |
+| --- | --- |
+| BPE ties char-level at ~2.14 bpb, overfits sooner | Measured (table above) |
+| Frequency-weighted merges: ~20 min → 50s | Measured |
+| Regex pre-tokenization: 50s → 8.7s, 2.68 → 2.43 bytes/token | Measured |
+| Regex pre-tokenization improves *model* quality | **Not yet measured** |
+
+The results table was produced with the earlier space-splitting pre-tokenizer.
+Re-running it against the regex version needs another GPU run, and until that
+happens the last row stays honest.
