@@ -1,0 +1,13 @@
+# artifacts
+out/
+__pycache__/
+*.pyc
+
+# datasets (regenerate with data/prepare.py)
+data/input.txt
+data/*.bin
+data/*.pkl
+
+# environments
+.venv/
+venv/
