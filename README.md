@@ -90,47 +90,59 @@ Default config: 6 layers, 6 heads, 384-dim embeddings, 256-token context
 
 ## Results
 
-Both runs: ~11M params, 6 layers, 6 heads, 384-dim, 256-token context,
-5000 iterations on one RTX 4070 SUPER, identical seed.
+All runs: ~11M params, 6 layers, 6 heads, 384-dim, 256-token context, 5000
+iterations, identical seed, one RTX 4070 SUPER. Lower bits-per-byte is better.
 
-| Tokenizer | Vocab | Corpus tokens | Bytes/token | Best val bpb | Best at iter |
-| --- | --- | --- | --- | --- | --- |
-| char | 65 | 1,115,394 | 1.00 | **2.138** | 2000 |
-| BPE | 1,024 | 416,758 | 2.68 | 2.144 | 750 |
+| Tokenizer | Vocab | Corpus tokens | Bytes/token | Best val bpb | Best at iter | Wall clock |
+| --- | --- | --- | --- | --- | --- | --- |
+| char | 65 | 1,115,394 | 1.00 | 2.1335 | 2000 | 254s |
+| BPE, space-split | 1,024 | 416,758 | 2.68 | 2.1435 | 750 | — |
+| BPE, regex pre-split | 1,024 | 459,760 | 2.43 | **2.0681** | 1000 | 246s |
 
-**BPE did not win.** It matched the character baseline and got there in a
-quarter of the steps, then overfit much harder — final train loss 0.13 against
-a val loss of 6.44. That is the honest result and it is the useful one: BPE cut
-the corpus from 1.1M tokens to 417k, so an 11M-parameter model simply runs out
-of new text and starts memorising. The tokenizer was never the bottleneck.
-**Data is.** Hence Phase 3.
+**The pre-tokenizer mattered more than BPE itself.** Naive space-splitting BPE
+*lost* to plain characters (2.1435 vs 2.1335). Adding GPT-2's regex pre-split —
+so a merge can never span a word, punctuation or newline boundary — moved it to
+2.0681, beating the character baseline by 3.1% and reaching that score in half
+the iterations.
 
-What BPE *does* buy, even here: 2.68x more text fits in the same 256-token
-context window, and generations contain far more well-formed English words,
-because the model spends its capacity on word structure instead of spelling.
+The counterintuitive part, and the most useful thing measured here:
+
+> **Compression got worse while the model got better.** The regex version
+> encodes the corpus *less* densely (2.43 vs 2.68 bytes/token) yet models it
+> better. Bytes-per-token is a tempting proxy for tokenizer quality and it is
+> the wrong one — space-splitting achieves higher compression by inventing
+> tokens like `"dog.\nThe"` that carry real information density but generalise
+> to almost nothing.
+
+Every configuration still overfits hard — the best BPE checkpoint is at
+iteration 1000 of 5000, ending at train loss 0.15 against val loss 5.53. An
+11M-parameter model exhausts a 1MB corpus. The tokenizer is no longer the
+bottleneck; **data is.** Hence Phase 3.
 
 Character-level sample (`--prompt "ROMEO:"`, temperature 0.8):
 
 ```text
 ROMEO:
-Come, that not the house of my heart's son:
-Be not on the hell of the other's womb.
-
-HERMIONE:
-Be so the gods.
+What is much sickness? where you fair to Marcius have
+To save the field-from that you have longed did
+The gods common for the sun of that strivice
+That straight a traitors of the crown.
 ```
 
 BPE sample, same prompt and temperature:
 
 ```text
-ROMEO: and now, no manne merites but that vock
-Blues his framonment of his sugdden signs?
-Have we cared to doubt not a pengggue for a visit
-From such a foul morning in lament;
-And I have gotted by my country's groan,
+ROMEO:
+O, by thou wert wit'st to bed, but crusp thy head;
+For 'twas the redress of thy sorrow,
+But buckle-winger, that thou hast not lived,
+To given upon thy shadowing face:
+Why should I not piece of thine own bed,
 ```
 
-Neither is Shakespeare. Both started as random noise minutes earlier.
+Neither is Shakespeare. The BPE one holds metre and produces far more
+well-formed words, which is the qualitative shape of that 3.1% bpb gap. Both
+started as random noise four minutes earlier.
 
 ### What the tokenizer learned
 
@@ -152,23 +164,6 @@ rather than every occurrence (as in the original BPE paper) took training from
 letters, digits, punctuation and whitespace apart before merging, so no merge
 can ever span `"dog.\nThe"` — took it to **8.7s**.
 
-Pre-tokenization is a real trade, not a free win: raw compression *fell* from
-2.68 to 2.43 bytes/token, because the tokenizer is no longer allowed to glue
-punctuation and newlines into words. The tokens it does learn are cleaner and
-generalise better, which is why GPT-2 through GPT-4 all do this — but whether
-that improves *modelling* on this corpus is unmeasured. See below.
-
-### Measured vs unmeasured
-
-Being explicit, because the distinction matters:
-
-| Claim | Status |
-| --- | --- |
-| BPE ties char-level at ~2.14 bpb, overfits sooner | Measured (table above) |
-| Frequency-weighted merges: ~20 min → 50s | Measured |
-| Regex pre-tokenization: 50s → 8.7s, 2.68 → 2.43 bytes/token | Measured |
-| Regex pre-tokenization improves *model* quality | **Not yet measured** |
-
-The results table was produced with the earlier space-splitting pre-tokenizer.
-Re-running it against the regex version needs another GPU run, and until that
-happens the last row stays honest.
+Pre-tokenization also lowers raw compression — 2.68 to 2.43 bytes/token — since
+punctuation and newlines can no longer be glued into words. It improves the
+model anyway; see the results table above for why that is the interesting part.
