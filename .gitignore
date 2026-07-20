@@ -1,12 +1,15 @@
 # artifacts
 out/
+out-*/
 __pycache__/
+.pytest_cache/
 *.pyc
 
-# datasets (regenerate with data/prepare.py)
+# datasets + tokenizer (regenerate with data/prepare.py)
 data/input.txt
 data/*.bin
 data/*.pkl
+data/tokenizer.json
 
 # environments
 .venv/
